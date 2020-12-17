@@ -1,50 +1,45 @@
-FROM ubuntu
+FROM debian:latest
 
-ARG ANDROID_CLI_VERSION=6514223
-ARG DEBIAN_FRONTEND=noninteractive
+# Versions
+ENV ANDROID_CMDTOOLS_VERSION=6858069
+ENV ANDROID_BUILDTOOLS_VERSION=30.0.3
+ENV ANDROID_NDK_VERSION=21.3.6528147
+ENV ANDROID_PLATFORM_VERSION=29
+ENV QT_VERSION=5.15.2
 
-ENV ANDROID_SDK_ROOT=/opt/android
-ENV JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
-ENV PATH=/root/.local/bin:$PATH
+# Paths
+ENV ANDROID_SDK=/opt/android-sdk
+ENV ANDROID_NDK=${ANDROID_SDK}/ndk/${ANDROID_NDK_VERSION}
 ENV QT_ROOT=/opt/qt
-ENV TZ=Europe/Paris
+ENV QT_ANDROID=${QT_ROOT}/${QT_VERSION}/android
+ENV JAVA_HOME=/usr/lib/jvm/adoptopenjdk-8-hotspot-amd64
 
-# BDM proxy
-ENV http_proxy=http://proxy.home.lan:3128
-ENV https_proxy=http://proxy.home.lan:3128
-
-# Update and install packages
+# Install base dependencies
 RUN apt update && \
-	apt install -y openjdk-8-jdk python3-pip cmake wget unzip git
+	apt install -y wget apt-transport-https gnupg build-essential python3-pip unzip git
 
-#
-# Android
-#
-RUN wget -Y off -P /tmp https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CLI_VERSION}_latest.zip && \
-	mkdir -p $ANDROID_SDK_ROOT && \
-	unzip /tmp/commandlinetools-linux-${ANDROID_CLI_VERSION}_latest.zip -d $ANDROID_SDK_ROOT && \
-	rm /tmp/commandlinetools-linux-${ANDROID_CLI_VERSION}_latest.zip
+# Install CMake
+RUN python3 -m pip install --user cmake
 
-RUN yes | $ANDROID_SDK_ROOT/tools/bin/sdkmanager --licenses --sdk_root=$ANDROID_SDK_ROOT
-RUN $ANDROID_SDK_ROOT/tools/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT \
-		"ndk-bundle" \
-		"build-tools;29.0.3" \
-		"platform-tools" \
-		"platforms;android-28"
+# Install AdoptOpenJDK 8
+RUN wget -qO - https://adoptopenjdk.jfrog.io/adoptopenjdk/api/gpg/key/public | apt-key add - && \
+	echo "deb https://adoptopenjdk.jfrog.io/adoptopenjdk/deb buster main" | tee /etc/apt/sources.list.d/adoptopenjdk.list && \
+	apt update && \
+	apt install -y adoptopenjdk-8-hotspot
 
-#
-# Qt
-#
-RUN pip3 install --user aqtinstall && \
-	aqt install -O ${QT_ROOT} 5.15.0 linux android
+# Install Android SDK and NDK
+RUN wget https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDTOOLS_VERSION}_latest.zip && \
+	unzip commandlinetools-linux-${ANDROID_CMDTOOLS_VERSION}_latest.zip -d ${ANDROID_SDK}/ && \
+	yes | ${ANDROID_SDK}/cmdline-tools/bin/sdkmanager --sdk_root=${ANDROID_SDK} --licenses && \
+	${ANDROID_SDK}/cmdline-tools/bin/sdkmanager --sdk_root=${ANDROID_SDK} --install "cmdline-tools;latest" && \
+	${ANDROID_SDK}/cmdline-tools/bin/sdkmanager --sdk_root=${ANDROID_SDK} --install \
+		"platform-tools" "platforms;android-${ANDROID_PLATFORM_VERSION}" \
+		"build-tools;${ANDROID_BUILDTOOLS_VERSION}" "ndk;${ANDROID_NDK_VERSION}" && \
+	rm commandlinetools-linux-${ANDROID_CMDTOOLS_VERSION}_latest.zip
 
-#
-# Conan
-#
-RUN pip3 install --user conan && \
-	conan remote add myconan http://artifactory.lehavre.home.lan/artifactory/api/conan/conan && \
-	conan remote disable conan-center && \
-	conan config set general.revisions_enabled=1
+# Install Qt android
+RUN python3 -m pip install --user aqtinstall && \
+	python3 -m aqt install --outputdir /opt/qt ${QT_VERSION} linux android
 
-
-COPY conan_profiles/* /root/.conan/profiles/
+# Setup some aliases
+RUN echo "alias cmake='/root/.local/bin/cmake'" >> /root/.bashrc
